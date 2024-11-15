@@ -118,3 +118,40 @@ func StartTransactionWithBody(
 
 	return tx, bc, nil
 }
+
+func StartTransaction(
+	ctx *fasthttp.RequestCtx, tracer *apm.Tracer, name string, ignoreBody bool,
+) (*apm.Transaction, *apm.BodyCapturer, error) {
+	var err error
+	var bc *apm.BodyCapturer = nil
+
+	traceContext, ok := getRequestTraceparent(ctx, apmhttp.W3CTraceparentHeader)
+	if !ok {
+		traceContext, ok = getRequestTraceparent(ctx, apmhttp.ElasticTraceparentHeader)
+	}
+
+	if ok {
+		tracestateHeader := string(ctx.Request.Header.Peek(apmhttp.TracestateHeader))
+		traceContext.State, _ = apmhttp.ParseTracestateHeader(strings.Split(tracestateHeader, ",")...)
+	}
+
+	tx := tracer.StartTransactionOptions(name, "request", apm.TransactionOptions{TraceContext: traceContext})
+
+	if !ignoreBody {
+		bc, err = setRequestContext(ctx, tracer, tx)
+		if err != nil {
+			tx.End()
+
+			return nil, nil, err
+		}
+	}
+
+	// NOTE: the fasthttp documentation states that references to RequestCtx
+	// must not be held after returning from RequestHandler. This is due to
+	// RequestCtx being pooled, and released after the RequestHandler returns.
+	// However, it is safe to reference and call RequestCtx in a closer, as the
+	// closer is invoked before releasing the RequestCtx back to the pool.
+	ctx.SetUserValue(txKey, newTxCloser(ctx, tx, bc))
+
+	return tx, bc, nil
+}

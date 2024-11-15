@@ -55,6 +55,7 @@ type middleware struct {
 	tracer           *apm.Tracer
 	requestIgnorer   apmfasthttp.RequestIgnorerFunc
 	panicPropagation bool
+	ignoreBody       bool
 }
 
 func (m *middleware) handle(c *fiber.Ctx) (result error) {
@@ -64,7 +65,7 @@ func (m *middleware) handle(c *fiber.Ctx) (result error) {
 	}
 
 	name := string(reqCtx.Method()) + " " + c.Path()
-	tx, body, err := apmfasthttp.StartTransactionWithBody(reqCtx, m.tracer, name)
+	tx, body, err := apmfasthttp.StartTransaction(reqCtx, m.tracer, name, m.ignoreBody)
 	if err != nil {
 		reqCtx.Error(err.Error(), http.StatusInternalServerError)
 
@@ -103,7 +104,9 @@ func (m *middleware) handle(c *fiber.Ctx) (result error) {
 			setContext(&tx.Context, resp)
 		}
 
-		body.Discard()
+		if body != nil {
+			body.Discard()
+		}
 	}()
 
 	result = c.Next()
@@ -167,6 +170,14 @@ func WithRequestIgnorer(fn apmfasthttp.RequestIgnorerFunc) Option {
 
 	return func(o *middleware) {
 		o.requestIgnorer = fn
+	}
+}
+
+// WithIgnoreBody returns an Option which sets ignoreBody to true.
+// If ignoreBody is true, the middleware will not capture request body.
+func WithIgnoreBody() Option {
+	return func(o *middleware) {
+		o.ignoreBody = true
 	}
 }
 
